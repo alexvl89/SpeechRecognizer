@@ -1,3 +1,24 @@
 audio_2025-07-11_14-50-05.ogg
 
 .venv
+mainwifi.py
+test.py
+
+# Python-specific ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env
+venv/
+*.sqlite3
+.DS_Store
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+
+# Ignore IDE-specific files
+.vscode/
+.idea/

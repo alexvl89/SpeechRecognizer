@@ -3,6 +3,7 @@ import gc
 import torch
 import os
 from pathlib import Path
+from bot import start_bot
 
 
 if torch.cuda.is_available():
@@ -64,3 +65,7 @@ diarize_segments = diarize_model(audio)
 result = whisperx.assign_word_speakers(diarize_segments, result)
 print(diarize_segments)
 print(result["segments"]) # segments are now assigned speaker IDs
+
+
+if __name__ == "__main__":
+    start_bot()
