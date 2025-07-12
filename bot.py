@@ -14,11 +14,43 @@ if not API_KEY:
 # Создание экземпляра бота с полученным токеном
 bot = telebot.TeleBot(API_KEY)
 
+# Каталог для сохранения аудиофайлов
+AUDIO_SAVE_PATH = "audio_files"
+# Создание каталога, если он не существует
+os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "Привет! Я ваш бот.")
 
+
+@bot.message_handler(content_types=['audio', 'voice'])
+def handle_audio(message):
+    try:
+        # Проверка, является ли сообщение пересланным
+        if message.forward_from or message.forward_from_chat:
+            bot.reply_to(
+                message, "Вы отправили пересланное аудио. Обрабатываю...")
+
+        # Получение файла
+        file_info = bot.get_file(
+            message.audio.file_id if message.audio else message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        # Определение имени файла
+        file_extension = ".ogg" if message.voice else ".mp3"
+        file_name = f"{message.chat.id}_{message.message_id}{file_extension}"
+        file_path = os.path.join(AUDIO_SAVE_PATH, file_name)
+
+        # Сохранение файла
+        with open(file_path, "wb") as audio_file:
+            audio_file.write(downloaded_file)
+
+        bot.reply_to(message, f"Аудиофайл сохранен: {file_name}")
+    except Exception as e:
+        bot.reply_to(
+            message, f"Произошла ошибка при обработке аудиофайла: {str(e)}")
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):

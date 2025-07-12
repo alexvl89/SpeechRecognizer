@@ -1,10 +1,15 @@
+from pydub import effects
 import whisperx
 import gc
 import torch
 import os
 from pathlib import Path
 from bot import start_bot
+from pydub import AudioSegment
 
+
+# Получение токена из переменной окружения
+YOUR_HF_TOKEN = os.getenv('YOUR_HF_TOKEN')
 
 if torch.cuda.is_available():
     print("CUDA is available!")
@@ -22,50 +27,64 @@ else:
 
 device = "cpu"
 audio_file = "audio_2025-07-11_14-50-05.ogg"
+input_ogg = "audio_files/854924596_25.ogg"
 batch_size = 16 # reduce if low on GPU mem
 compute_type = "int8" # change to "int8" if low on GPU mem (may reduce accuracy)
 
-if os.path.exists(audio_file):
-    print("Файл существует")
-else:
-    print("Файл не найден")
+# Проверка наличия файла
+if not os.path.exists(input_ogg):
+    raise FileNotFoundError(f"Файл не найден: {input_ogg}")
+print("Файл найден:", input_ogg)
 
-# 1. Transcribe with original whisper (batched)
+
+# Конвертация ogg → wav (моно, 16кГц, 16bit PCM)
+audio = AudioSegment.from_file(input_ogg, format="ogg")
+audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+# Нормализация аудио
+audio = effects.normalize(audio)
+print(f"Duration (ms): {len(audio)}")  # минимум желательно > 1000
+
+normalized_wav = "normalized_audio.wav"
+audio.export(normalized_wav, format="wav")
+
+# 1. Распознавание речи
 model = whisperx.load_model("large-v2", device, compute_type=compute_type)
+audio_tensor = whisperx.load_audio(normalized_wav)
+result = model.transcribe(audio_tensor, batch_size=batch_size, language='ru')
+print(result["segments"])  # before alignment
 
-# save model to local path (optional)
-# model_dir = "/path/"
-# model = whisperx.load_model("large-v2", device, compute_type=compute_type, download_root=model_dir)
+# # 2. Алигнмент
+# model_a, metadata = whisperx.load_align_model(
+#     language_code=result["language"], device=device)
+# result = whisperx.align(
+#     result["segments"],
+#     model_a,
+#     metadata,
+#     normalized_wav,  # передаём путь, а не массив
+#     device,
+#     return_char_alignments=False
+# )
+# print(result["segments"])  # after alignment
 
-print(audio_file)
-print(Path(audio_file).exists())  # True / False
-audio = whisperx.load_audio(str(audio_file))
-result = model.transcribe(audio, batch_size=batch_size)
-print(result["segments"]) # before alignment
+# # 3. Диаризация
+# diarize_model = whisperx.diarize.DiarizationPipeline(
+#     use_auth_token=YOUR_HF_TOKEN,
+#     device=device
+# )
 
-# delete model if low on GPU resources
-# import gc; import torch; gc.collect(); torch.cuda.empty_cache(); del model
+# diarize_segments = diarize_model(normalized_wav)  # путь к wav-файлу
+# result = whisperx.assign_word_speakers(diarize_segments, result)
 
-# 2. Align whisper output
-model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+# print(diarize_segments)
+# print(result["segments"])  # с указанием speaker ID
 
-print(result["segments"]) # after alignment
+# Очистка GPU (если надо)
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 
-# delete model if low on GPU resources
-# import gc; import torch; gc.collect(); torch.cuda.empty_cache(); del model_a
-YOUR_HF_TOKEN="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"
-# 3. Assign speaker labels
-diarize_model = whisperx.diarize.DiarizationPipeline(use_auth_token=YOUR_HF_TOKEN, device=device)
+# # Запуск Telegram-бота
+# if __name__ == "__main__":
+#     start_bot()
 
-# add min/max number of speakers if known
-diarize_segments = diarize_model(audio)
-# diarize_model(audio, min_speakers=min_speakers, max_speakers=max_speakers)
-
-result = whisperx.assign_word_speakers(diarize_segments, result)
-print(diarize_segments)
-print(result["segments"]) # segments are now assigned speaker IDs
-
-
-if __name__ == "__main__":
-    start_bot()
+print("Завершение цикла")
