@@ -5,6 +5,7 @@ mainwifi.py
 test.py
 audio_files
 normalized_audio.wav
+silence.wav
 
 # Python-specific ignores
 __pycache__/

@@ -1,90 +1,98 @@
-from pydub import effects
-import whisperx
-import gc
-import torch
+import telebot
+from dotenv import load_dotenv
 import os
-from pathlib import Path
-from bot import start_bot
-from pydub import AudioSegment
+import logging  # Импортируем модуль logging
 
+from speech_recognizer import SpeechRecognizer
+
+
+# Настройка логгера
+logging.basicConfig(
+    # Уровень логирования (можно изменить на DEBUG для более подробного вывода)
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Формат сообщений
+    handlers=[
+        logging.StreamHandler()  # Вывод логов в консоль
+    ]
+)
+logger = logging.getLogger(__name__)  # Создаем экземпляр логгера
+
+
+# Загрузка переменных окружения из .env файла
+load_dotenv()
 
 # Получение токена из переменной окружения
-YOUR_HF_TOKEN = os.getenv('YOUR_HF_TOKEN')
+API_KEY = os.getenv('API_KEY')
+if not API_KEY:
+    raise ValueError(
+        "API_KEY не найден. Убедитесь, что он указан в .env файле.")
 
-if torch.cuda.is_available():
-    print("CUDA is available!")
-    print(f"Device count: {torch.cuda.device_count()}")
-    for i in range(torch.cuda.device_count()):
-        print(f"Device {i}: {torch.cuda.get_device_name(i)}")
-else:
-    print("CUDA is NOT available. Using CPU.")
+# Создание экземпляра бота с полученным токеном
+bot = telebot.TeleBot(API_KEY)
 
-
-if torch.xpu.is_available():
-    print("xpu is available")
-else:
-    print("xpu is not available")
-
-device = "cpu"
-audio_file = "audio_2025-07-11_14-50-05.ogg"
-input_ogg = "audio_files/854924596_25.ogg"
-batch_size = 16 # reduce if low on GPU mem
-compute_type = "int8" # change to "int8" if low on GPU mem (may reduce accuracy)
-
-# Проверка наличия файла
-if not os.path.exists(input_ogg):
-    raise FileNotFoundError(f"Файл не найден: {input_ogg}")
-print("Файл найден:", input_ogg)
+# Каталог для сохранения аудиофайлов
+AUDIO_SAVE_PATH = "audio_files"
+# Создание каталога, если он не существует
+os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
 
 
-# Конвертация ogg → wav (моно, 16кГц, 16bit PCM)
-audio = AudioSegment.from_file(input_ogg, format="ogg")
-audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-# Нормализация аудио
-audio = effects.normalize(audio)
-print(f"Duration (ms): {len(audio)}")  # минимум желательно > 1000
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    logger.info(
+        f"Получена команда: {message.text} от пользователя {message.chat.id}")
+    bot.reply_to(message, "Привет! Я ваш бот.")
 
-normalized_wav = "normalized_audio.wav"
-audio.export(normalized_wav, format="wav")
 
-# 1. Распознавание речи
-model = whisperx.load_model("large-v2", device, compute_type=compute_type)
-audio_tensor = whisperx.load_audio(normalized_wav)
-result = model.transcribe(audio_tensor, batch_size=batch_size, language='ru')
-print(result["segments"])  # before alignment
+@bot.message_handler(content_types=['audio', 'voice'])
+def handle_audio(message):
+    try:
+        logger.info(
+            f"Получено аудиосообщение от пользователя {message.chat.id}")
+        # Проверка, является ли сообщение пересланным
+        if message.forward_from or message.forward_from_chat:
+            bot.reply_to(
+                message, "Вы отправили пересланное аудио. Обрабатываю...")
 
-# # 2. Алигнмент
-# model_a, metadata = whisperx.load_align_model(
-#     language_code=result["language"], device=device)
-# result = whisperx.align(
-#     result["segments"],
-#     model_a,
-#     metadata,
-#     normalized_wav,  # передаём путь, а не массив
-#     device,
-#     return_char_alignments=False
-# )
-# print(result["segments"])  # after alignment
+        # Получение файла
+        file_info = bot.get_file(
+            message.audio.file_id if message.audio else message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
 
-# # 3. Диаризация
-# diarize_model = whisperx.diarize.DiarizationPipeline(
-#     use_auth_token=YOUR_HF_TOKEN,
-#     device=device
-# )
+        # Определение имени файла
+        file_extension = ".ogg" if message.voice else ".mp3"
+        file_name = f"{message.chat.id}_{message.message_id}{file_extension}"
+        file_path = os.path.join(AUDIO_SAVE_PATH, file_name)
 
-# diarize_segments = diarize_model(normalized_wav)  # путь к wav-файлу
-# result = whisperx.assign_word_speakers(diarize_segments, result)
+        # Сохранение файла
+        with open(file_path, "wb") as audio_file:
+            audio_file.write(downloaded_file)
 
-# print(diarize_segments)
-# print(result["segments"])  # с указанием speaker ID
+        logger.info(f"Аудиофайл сохранен: {file_path}")
+        bot.reply_to(message, f"Аудиофайл сохранен: {file_name}")
 
-# Очистка GPU (если надо)
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
+        bot.reply_to(message, "Начинаем распознавание")
 
-# # Запуск Telegram-бота
-# if __name__ == "__main__":
-#     start_bot()
+        text = SpeechRecognizer.transcribe_audio(
+            file_path)
 
-print("Завершение цикла")
+        logger.info(f"Распознанный текст: {text}")
+        bot.reply_to(message, f"распознанные слова: {text}")
+        bot.reply_to(message, "end")
+
+    except Exception as e:
+        bot.reply_to(
+            message, f"Произошла ошибка при обработке аудиофайла: {str(e)}")
+
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    bot.reply_to(message, message.text)
+
+
+def start_bot():
+    print("Бот запущен...")
+    bot.polling()
+
+
+if __name__ == "__main__":
+    start_bot()
