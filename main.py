@@ -69,16 +69,17 @@ def handle_audio(message):
             audio_file.write(downloaded_file)
 
         logger.info(f"Аудиофайл сохранен: {file_path}")
-        bot.reply_to(message, f"Аудиофайл сохранен: {file_name}")
-
-        bot.reply_to(message, "Начинаем распознавание")
+        bot.reply_to(
+            message, f"Аудиофайл сохранен: {file_name}. Начинаем распознавание")
 
         text = SpeechRecognizer.transcribe_audio(
             file_path)
 
         logger.info(f"Распознанный текст: {text}")
         bot.reply_to(message, f"распознанные слова: {text}")
-        bot.reply_to(message, "end")
+
+        logger.info(f"Распознавание завершено. ожидание")
+
 
     except Exception as e:
         bot.reply_to(
