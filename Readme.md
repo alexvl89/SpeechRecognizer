@@ -93,3 +93,8 @@ del model  # или del model_a
 ├── audio_2025-07-11_14-50-05.ogg
 ├── main.py
 └── README.md
+
+
+## Используемые библиотеки
+
+- [WhisperX](https://github.com/m-bain/whisperx): Распознавание речи. Лицензия: BSD-2-Clause.
