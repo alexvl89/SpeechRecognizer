@@ -31,7 +31,8 @@ if not API_KEY:
 bot = telebot.TeleBot(API_KEY)
 
 # Каталог для сохранения аудиофайлов
-AUDIO_SAVE_PATH = "audio_files"
+AUDIO_SAVE_PATH = "audio_files\input"
+
 # Создание каталога, если он не существует
 os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
 

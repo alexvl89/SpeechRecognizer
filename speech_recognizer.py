@@ -7,8 +7,12 @@ from pathlib import Path
 # from main import start_bot
 from pydub import AudioSegment
 
+AUDIO_SAVE_NORM = "audio_files\normalized"
+
 
 class SpeechRecognizer:
+
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "int8"  # или "float16"/"float32"
     batch_size = 5
@@ -50,7 +54,8 @@ class SpeechRecognizer:
     @classmethod
     def transcribe_audio(cls, input_ogg_path: str) -> str:
         cls.log_devices()
-        wav_path = "normalized_input.wav"
+        wav_path = os.path.join(
+            AUDIO_SAVE_NORM, os.path.basename(input_ogg_path))
         cls.preprocess_audio(input_ogg_path, wav_path)
 
         # 1. Распознавание речи
@@ -62,29 +67,29 @@ class SpeechRecognizer:
         print("Распознанные сегменты (до alignment):")
         print(result["segments"])
 
-        # 2. Алигнмент
-        model_a, metadata = whisperx.load_align_model(
-            language_code=result["language"],
-            device=cls.device
-        )
-        result = whisperx.align(
-            result["segments"], model_a, metadata, wav_path,
-            device=cls.device,
-            return_char_alignments=False
-        )
-        print("Сегменты после alignment:")
-        print(result["segments"])
+        # # 2. Алигнмент
+        # model_a, metadata = whisperx.load_align_model(
+        #     language_code=result["language"],
+        #     device=cls.device
+        # )
+        # result = whisperx.align(
+        #     result["segments"], model_a, metadata, wav_path,
+        #     device=cls.device,
+        #     return_char_alignments=False
+        # )
+        # print("Сегменты после alignment:")
+        # print(result["segments"])
 
-        # 3. Диаризация
-        diarize_model = whisperx.diarize.DiarizationPipeline(
-            use_auth_token=cls.hf_token,
-            device=cls.device
-        )
-        diarize_segments = diarize_model(wav_path)
-        result = whisperx.assign_word_speakers(diarize_segments, result)
+        # # 3. Диаризация
+        # diarize_model = whisperx.diarize.DiarizationPipeline(
+        #     use_auth_token=cls.hf_token,
+        #     device=cls.device
+        # )
+        # diarize_segments = diarize_model(wav_path)
+        # result = whisperx.assign_word_speakers(diarize_segments, result)
 
-        print("Сегменты с указанием speaker ID:")
-        print(result["segments"])
+        # print("Сегменты с указанием speaker ID:")
+        # print(result["segments"])
 
         # Очистка
         gc.collect()
