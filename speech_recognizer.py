@@ -51,6 +51,14 @@ class SpeechRecognizer:
 
         audio.export(output_path, format="wav")
         print(f"Audio preprocessed and saved to: {output_path}")
+
+        # Удаление исходного файла после успешного сохранения
+        try:
+            os.remove(input_path)
+            print(f"Исходный файл удалён: {input_path}")
+        except OSError as e:
+            print(f"Ошибка при удалении исходного файла {input_path}: {e}")
+
         return output_path
 
     @classmethod
@@ -58,6 +66,7 @@ class SpeechRecognizer:
         cls.log_devices()
         wav_path = os.path.join(
             AUDIO_SAVE_NORM, os.path.basename(input_ogg_path))
+        # вернули файл
         cls.preprocess_audio(input_ogg_path, wav_path)
 
         # 1. Распознавание речи
@@ -92,6 +101,13 @@ class SpeechRecognizer:
 
         # print("Сегменты с указанием speaker ID:")
         # print(result["segments"])
+
+        # Удаление WAV-файла после использования
+        try:
+            os.remove(wav_path)
+            print(f"WAV-файл удалён: {wav_path}")
+        except OSError as e:
+            print(f"Ошибка при удалении WAV-файла {wav_path}: {e}")
 
         # Очистка
         gc.collect()
