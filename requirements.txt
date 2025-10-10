@@ -2,3 +2,4 @@ torch==2.0.1
 whisperx
 telebot
 python-dotenv
+setuptools<81

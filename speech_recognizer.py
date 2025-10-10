@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 # from main import start_bot
 from pydub import AudioSegment
+from transformers import pipeline
 
-AUDIO_SAVE_NORM = "audio_files\normalized"
+
+AUDIO_SAVE_NORM = "audio_files\\normalized"
 
 
 class SpeechRecognizer:
@@ -198,3 +200,30 @@ class SpeechRecognizer:
 # #     start_bot()
 
 # print("Завершение цикла")
+
+
+    @classmethod
+    def summarize_text(cls, text: str) -> str:
+        print("\n📌 Генерация краткого пересказа...")
+        summarizer = pipeline(
+            "summarization", model="cointegrated/rut5-base-summarizer")
+        # summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6",
+        #                       device=0 if cls.device == "xpu" else -1)
+        summary = summarizer(text, max_length=60,
+                             min_length=10, do_sample=False)
+        print(summary)
+        return summary[0]["summary_text"].strip()
+
+
+if __name__ == "__main__":
+    recognizer = SpeechRecognizer()
+
+    # wav_path = os.path.join(
+    #     "audio_files\input", os.path.basename("854924596_111.ogg"))
+    # transcript = recognizer.transcribe_audio(wav_path)
+
+    text = "На рыбалку, Саня, на рыбалку."
+    transcript = text
+    print("\n📢 Пересказ:")
+    summary = recognizer.summarize_text(transcript)
+    print(summary)
