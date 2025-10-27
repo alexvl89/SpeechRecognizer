@@ -12,6 +12,7 @@ RUN apt-get update && \
 
 # Копируем requirements.txt (на случай, если потребуется доустановка)
 COPY requirements.txt .
+
 # Устанавливаем зависимости из requirements.txt (если что-то отсутствует в .venv)
 RUN pip install --no-cache-dir -r requirements.txt
 

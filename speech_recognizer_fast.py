@@ -1,4 +1,5 @@
 import gc
+import os
 import logging
 from pathlib import Path
 from typing import Optional
@@ -30,16 +31,59 @@ class SpeechRecognizerFast:
     _model_cache = None
     _summarizer_cache = None
 
+    # @classmethod
+    # def _get_model(cls):
+    #     """Ленивая загрузка модели faster-whisper."""
+    #     if cls._model_cache is None:
+    #         logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
+    #         cls._model_cache = WhisperModel(
+    #             model_size_or_path="large-v2",
+    #             device=cls.device,
+    #             compute_type=cls.compute_type
+    #         )
+    #     return cls._model_cache
+
     @classmethod
     def _get_model(cls):
         """Ленивая загрузка модели faster-whisper."""
         if cls._model_cache is None:
             logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
-            cls._model_cache = WhisperModel(
-                model_size_or_path="large-v2",
-                device=cls.device,
-                compute_type=cls.compute_type
-            )
+            # Относительный путь *в windows убрать первый /)
+            model_path = "/app/models/faster-whisper-large-v2"
+            # Абсолютный путь для отладки
+            full_path = os.path.join(os.getcwd(), model_path)
+            logger.info(f"Проверка пути {full_path}")
+
+            if os.path.exists(full_path) and os.path.isdir(full_path):
+                try:
+                    logger.info(
+                        f"Содержимое {full_path}: {os.listdir(full_path)}")
+                    # Пытаемся загрузить локальную модель
+                    cls._model_cache = WhisperModel(
+                        model_size_or_path=model_path,
+                        device=cls.device,
+                        compute_type=cls.compute_type,
+                        local_files_only=True
+                    )
+                    logger.info("Локальная модель успешно загружена.")
+                except Exception as e:
+                    logger.error(f"Ошибка загрузки локальной модели: {e}")
+                    logger.info("Попытка загрузки модели с Hugging Face...")
+                    # Загружаем с Hugging Face, если локальная модель не работает
+                    cls._model_cache = WhisperModel(
+                        model_size_or_path="large-v2",
+                        device=cls.device,
+                        compute_type=cls.compute_type
+                    )
+            else:
+                logger.info(
+                    f"Локальная модель не найдена в {full_path}. Загрузка с Hugging Face...")
+                # Загружаем с Hugging Face, если папка отсутствует
+                cls._model_cache = WhisperModel(
+                    model_size_or_path="large-v2",
+                    device=cls.device,
+                    compute_type=cls.compute_type
+                )
         return cls._model_cache
 
     @staticmethod

@@ -25,3 +25,4 @@ venv/
 # Ignore IDE-specific files
 .vscode/
 .idea/
+app/*

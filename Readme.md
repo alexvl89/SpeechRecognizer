@@ -105,3 +105,5 @@ del model  # или del model_a
 Сборка 1го образа
 docker build -f base.Dockerfile  -t my-python-base:latest .
 
+
+Модель можно скачать по ссылке [openai/whisper-large-v2](https://huggingface.co/openai/whisper-large-v2
