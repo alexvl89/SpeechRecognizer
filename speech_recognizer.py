@@ -1,245 +1,160 @@
-from pydub import effects
-import whisperx
 import gc
-import torch
-import os
+import logging
 from pathlib import Path
-# from main import start_bot
-from pydub import AudioSegment
-from transformers import pipeline
+from typing import Optional
+
+import torch
+import whisperx
+from pydub import AudioSegment, effects
+import mimetypes
+
+try:
+    from transformers import pipeline
+    HAS_TRANSFORMERS = True
+except ImportError:
+    HAS_TRANSFORMERS = False
 
 
-AUDIO_SAVE_NORM = "audio_files\\normalized"
+logger = logging.getLogger(__name__)
+
+AUDIO_SAVE_NORM = Path("audio_files/normalized")
+AUDIO_SAVE_NORM.mkdir(parents=True, exist_ok=True)
 
 
 class SpeechRecognizer:
-
+    """Класс для распознавания речи и (опционально) суммаризации текста."""
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "int8"  # или "float16"/"float32"
+    compute_type = "int8"
     batch_size = 5
-    hf_token = os.getenv('YOUR_HF_TOKEN')
+    _model_cache = None
+    _summarizer_cache = None
+
+    @classmethod
+    def _get_model(cls):
+        """Ленивая загрузка модели WhisperX."""
+        if cls._model_cache is None:
+            logger.info(f"Загрузка модели WhisperX ({cls.device})...")
+            cls._model_cache = whisperx.load_model(
+                "large-v2", cls.device, compute_type=cls.compute_type
+            )
+        return cls._model_cache
 
     @staticmethod
-    def log_devices():
+    def _log_devices():
+        """Вывод информации об устройствах."""
         if torch.cuda.is_available():
-            print("CUDA is available!")
-            for i in range(torch.cuda.device_count()):
-                print(f"Device {i}: {torch.cuda.get_device_name(i)}")
+            logger.info(f"CUDA доступна: {torch.cuda.get_device_name(0)}")
         else:
-            print("CUDA is NOT available. Using CPU.")
+            logger.info("CUDA не доступна. Используется CPU.")
 
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
-            print("XPU is available")
-        else:
-            print("XPU is not available")
+    # @staticmethod
+    # def preprocess_audio(input_path: Path, output_path: Path) -> Path:
+    #     """Преобразует ogg → wav, нормализует и добавляет тишину."""
+    #     if not input_path.exists():
+    #         raise FileNotFoundError(f"Файл не найден: {input_path}")
+
+    #     logger.info(f"Обработка файла: {input_path}")
+    #     audio = AudioSegment.from_file(input_path, format="ogg")
+    #     audio = (
+    #         audio.set_channels(1)
+    #         .set_frame_rate(16000)
+    #         .set_sample_width(2)
+    #     )
+    #     audio = effects.normalize(audio)
+    #     audio += AudioSegment.silent(duration=3000)
+
+    #     output_path.parent.mkdir(parents=True, exist_ok=True)
+    #     audio.export(output_path, format="wav")
+    #     logger.info(f"Сохранено нормализованное аудио: {output_path}")
+
+    #     input_path.unlink(missing_ok=True)
+    #     return output_path
 
     @staticmethod
-    def preprocess_audio(input_path: str, output_path: str) -> str:
-        if not os.path.exists(input_path):
+    def preprocess_audio(input_path: Path, output_path: Path) -> Path:
+        """Преобразует аудиофайл (ogg, mp3, wav, flac и т.п.) → wav, нормализует и добавляет тишину."""
+        if not input_path.exists():
             raise FileNotFoundError(f"Файл не найден: {input_path}")
-        print("Файл найден:", input_path)
 
-        # Преобразование в WAV 16bit mono 16kHz PCM + нормализация
-        audio = AudioSegment.from_file(input_path, format="ogg")
-        audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-        audio = effects.normalize(audio)
+        logger.info(f"Обработка файла: {input_path}")
 
-        # Добавим тишину на случай коротких аудио
-        silence = AudioSegment.silent(duration=5000)
-        audio += silence
+        # Определяем формат по расширению или MIME-типу
+        ext = input_path.suffix.lower().replace('.', '')
+        mime = mimetypes.guess_type(str(input_path))[0] or ""
+        if not ext and "audio/" in mime:
+            ext = mime.split("/")[-1]
 
-        audio.export(output_path, format="wav")
-        print(f"Audio preprocessed and saved to: {output_path}")
-
-        # Удаление исходного файла после успешного сохранения
         try:
-            os.remove(input_path)
-            print(f"Исходный файл удалён: {input_path}")
-        except OSError as e:
-            print(f"Ошибка при удалении исходного файла {input_path}: {e}")
+            # Если ffmpeg сможет сам определить формат — лучше без параметра format
+            audio = AudioSegment.from_file(input_path, format=ext or None)
+        except Exception as e:
+            raise RuntimeError(
+                f"Ошибка при декодировании аудио ({input_path}): {e}")
+
+        # Преобразуем в моно 16кГц 16-бит
+        audio = (
+            audio.set_channels(1)
+            .set_frame_rate(16000)
+            .set_sample_width(2)
+        )
+
+        # Нормализация и добавление 3 секунд тишины в конец
+        audio = effects.normalize(audio)
+        audio += AudioSegment.silent(duration=3000)
+
+        # Создание каталога для выходного файла
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        audio.export(output_path, format="wav")
+
+        logger.info(f"Сохранено нормализованное аудио: {output_path}")
+
+        # Удаляем исходный файл (если нужно)
+        input_path.unlink(missing_ok=True)
 
         return output_path
 
     @classmethod
-    def transcribe_audio(cls, input_ogg_path: str) -> str:
-        cls.log_devices()
-        wav_path = os.path.join(
-            AUDIO_SAVE_NORM, os.path.basename(input_ogg_path))
-        # вернули файл
-        cls.preprocess_audio(input_ogg_path, wav_path)
+    def transcribe_audio(cls, input_path: str) -> str:
+        """Распознаёт речь из аудиофайла ogg и возвращает текст."""
+        cls._log_devices()
 
-        # 1. Распознавание речи
-        model = whisperx.load_model(
-            "large-v2", cls.device, compute_type=cls.compute_type)
-        audio_tensor = whisperx.load_audio(wav_path)
-        result = model.transcribe(
-            audio_tensor, batch_size=cls.batch_size, language='ru')
-        print("Распознанные сегменты (до alignment):")
-        print(result["segments"])
+        input_path = Path(input_path)
+        wav_path = AUDIO_SAVE_NORM / f"{input_path.stem}.wav"
+        cls.preprocess_audio(input_path, wav_path)
 
-        # # 2. Алигнмент
-        # model_a, metadata = whisperx.load_align_model(
-        #     language_code=result["language"],
-        #     device=cls.device
-        # )
-        # result = whisperx.align(
-        #     result["segments"], model_a, metadata, wav_path,
-        #     device=cls.device,
-        #     return_char_alignments=False
-        # )
-        # print("Сегменты после alignment:")
-        # print(result["segments"])
-
-        # # 3. Диаризация
-        # diarize_model = whisperx.diarize.DiarizationPipeline(
-        #     use_auth_token=cls.hf_token,
-        #     device=cls.device
-        # )
-        # diarize_segments = diarize_model(wav_path)
-        # result = whisperx.assign_word_speakers(diarize_segments, result)
-
-        # print("Сегменты с указанием speaker ID:")
-        # print(result["segments"])
-
-        # Удаление WAV-файла после использования
         try:
-            os.remove(wav_path)
-            print(f"WAV-файл удалён: {wav_path}")
-        except OSError as e:
-            print(f"Ошибка при удалении WAV-файла {wav_path}: {e}")
+            model = cls._get_model()
+            audio_tensor = whisperx.load_audio(str(wav_path))
+            result = model.transcribe(
+                audio_tensor, batch_size=cls.batch_size, language="ru"
+            )
 
-        # Очистка
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            text = " ".join(seg["text"] for seg in result["segments"])
+            logger.info(f"Распознанный текст ({len(text)} символов)")
 
-        # Собираем итоговый текст
-        text = " ".join([seg["text"] for seg in result["segments"]])
-        return text.strip()
+            return text.strip()
 
-# # Получение токена из переменной окружения
-# YOUR_HF_TOKEN = os.getenv('YOUR_HF_TOKEN')
-
-# if torch.cuda.is_available():
-#     print("CUDA is available!")
-#     print(f"Device count: {torch.cuda.device_count()}")
-#     for i in range(torch.cuda.device_count()):
-#         print(f"Device {i}: {torch.cuda.get_device_name(i)}")
-# else:
-#     print("CUDA is NOT available. Using CPU.")
-
-
-# if torch.xpu.is_available():
-#     print("xpu is available")
-# else:
-#     print("xpu is not available")
-
-# device = "cpu"
-# audio_file = "audio_2025-07-11_14-50-05.ogg"
-# input_ogg = "audio_files/854924596_25.ogg"
-# batch_size = 16 # reduce if low on GPU mem
-# compute_type = "int8" # change to "int8" if low on GPU mem (may reduce accuracy)
-
-# # Проверка наличия файла
-# if not os.path.exists(input_ogg):
-#     raise FileNotFoundError(f"Файл не найден: {input_ogg}")
-# print("Файл найден:", input_ogg)
-
-
-# # Конвертация ogg → wav (моно, 16кГц, 16bit PCM)
-# audio = AudioSegment.from_file(input_ogg, format="ogg")
-# audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-# # Нормализация аудио
-# audio = effects.normalize(audio)
-
-
-# silence = AudioSegment.silent(duration=5000)  # 1 сек
-# audio = audio + silence
-
-# print(f"Duration (ms): {len(audio)}")  # минимум желательно > 1000
-
-# input_ogg = "silence.wav"
-# # Сохранить как WAV
-# audio.export(input_ogg, format="wav")
-
-
-# # # Можно "base" или "tiny"
-# # model = whisperx.load_model("small", device, compute_type=compute_type)
-# # # model = whisperx.load_model("large-v2", device, compute_type=compute_type)
-# # result = model.transcribe(input_ogg, batch_size=5,
-# #                           language='ru')
-# # # result = model.transcribe(input_ogg, language='ru')
-# # print(result)
-
-# # normalized_wav = "normalized_audio.wav"
-# # audio.export(normalized_wav, format="wav")
-
-# # 1. Распознавание речи
-# model = whisperx.load_model("large-v2", device, compute_type=compute_type)
-# audio_tensor = whisperx.load_audio(input_ogg)
-# result = model.transcribe(audio_tensor, batch_size=batch_size, language='ru')
-# print(result["segments"])  # before alignment
-
-# # 2. Алигнмент
-# model_a, metadata = whisperx.load_align_model(
-#     language_code=result["language"], device=device)
-# result = whisperx.align(
-#     result["segments"],
-#     model_a,
-#     metadata,
-#     input_ogg,  # передаём путь, а не массив
-#     device,
-#     return_char_alignments=False
-# )
-# print(result["segments"])  # after alignment
-
-# # 3. Диаризация
-# diarize_model = whisperx.diarize.DiarizationPipeline(
-#     use_auth_token=YOUR_HF_TOKEN,
-#     device=device
-# )
-
-# diarize_segments = diarize_model(input_ogg)  # путь к wav-файлу
-# result = whisperx.assign_word_speakers(diarize_segments, result)
-
-# print(diarize_segments)
-# print(result["segments"])  # с указанием speaker ID
-
-# # Очистка GPU (если надо)
-# gc.collect()
-# if torch.cuda.is_available():
-#     torch.cuda.empty_cache()
-
-# # # Запуск Telegram-бота
-# # if __name__ == "__main__":
-# #     start_bot()
-
-# print("Завершение цикла")
-
+        finally:
+            wav_path.unlink(missing_ok=True)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     @classmethod
-    def summarize_text(cls, text: str) -> str:
-        print("\n📌 Генерация краткого пересказа...")
-        summarizer = pipeline(
-            "summarization", model="cointegrated/rut5-base-summarizer")
-        # summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6",
-        #                       device=0 if cls.device == "xpu" else -1)
-        summary = summarizer(text, max_length=60,
+    def summarize_text(cls, text: str, max_length: int = 60) -> Optional[str]:
+        """Создаёт краткий пересказ текста с помощью Transformers."""
+        if not HAS_TRANSFORMERS:
+            logger.warning("Transformers не установлены, пересказ недоступен.")
+            return None
+
+        if cls._summarizer_cache is None:
+            logger.info("Загрузка модели суммаризации...")
+            cls._summarizer_cache = pipeline(
+                "summarization", model="cointegrated/rut5-base-summarizer"
+            )
+
+        summarizer = cls._summarizer_cache
+        summary = summarizer(text, max_length=max_length,
                              min_length=10, do_sample=False)
-        print(summary)
         return summary[0]["summary_text"].strip()
-
-
-if __name__ == "__main__":
-    recognizer = SpeechRecognizer()
-
-    # wav_path = os.path.join(
-    #     "audio_files\input", os.path.basename("854924596_111.ogg"))
-    # transcript = recognizer.transcribe_audio(wav_path)
-
-    text = "На рыбалку, Саня, на рыбалку."
-    transcript = text
-    print("\n📢 Пересказ:")
-    summary = recognizer.summarize_text(transcript)
-    print(summary)

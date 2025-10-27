@@ -98,3 +98,10 @@ del model  # или del model_a
 ## Используемые библиотеки
 
 - [WhisperX](https://github.com/m-bain/whisperx): Распознавание речи. Лицензия: BSD-2-Clause.
+
+
+
+
+Сборка 1го образа
+docker build -f base.Dockerfile  -t my-python-base:latest .
+

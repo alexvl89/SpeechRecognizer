@@ -1,89 +1,110 @@
+import logging
+import os
+from pathlib import Path
+import time
+
 import telebot
 from dotenv import load_dotenv
-import os
-import logging  # Импортируем модуль logging
 
 from speech_recognizer import SpeechRecognizer
+from telebot.apihelper import ApiTelegramException
 
 
-# Настройка логгера
+# ────────────────────────────────
+# Настройка логирования
 logging.basicConfig(
-    # Уровень логирования (можно изменить на DEBUG для более подробного вывода)
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",  # Формат сообщений
-    handlers=[
-        logging.StreamHandler()  # Вывод логов в консоль
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger(__name__)  # Создаем экземпляр логгера
+logger = logging.getLogger("bot")
 
-
-# Загрузка переменных окружения из .env файла
+# ────────────────────────────────
+# Настройка окружения
 load_dotenv()
+API_KEY = os.getenv("API_KEY")
 
-# Получение токена из переменной окружения
-API_KEY = os.getenv('API_KEY')
 if not API_KEY:
-    raise ValueError(
-        "API_KEY не найден. Убедитесь, что он указан в .env файле.")
+    raise ValueError("Переменная API_KEY не найдена в .env")
 
-# Создание экземпляра бота с полученным токеном
 bot = telebot.TeleBot(API_KEY)
+AUDIO_SAVE_PATH = Path("audio_files/input")
+AUDIO_SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
-# Каталог для сохранения аудиофайлов
-AUDIO_SAVE_PATH = "audio_files\\input"
+recognizer = SpeechRecognizer()
 
-# Создание каталога, если он не существует
-os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+# ────────────────────────────────
+# Обработчики
 
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
-    logger.info(
-        f"Получена команда: {message.text} от пользователя {message.chat.id}")
-    bot.reply_to(message, "Привет! Я ваш бот.")
+    logger.info(f"Команда {message.text} от {message.chat.id}")
+    bot.reply_to(message, "🎙 Отправь голосовое сообщение, и я его расшифрую!")
 
 
-@bot.message_handler(content_types=['audio', 'voice'])
+@bot.message_handler(content_types=["audio", "voice", "video"])
 def handle_audio(message):
     try:
-        logger.info(
-            f"Получено аудиосообщение от пользователя {message.chat.id}")
-        # Проверка, является ли сообщение пересланным
-        if message.forward_from or message.forward_from_chat:
-            bot.reply_to(
-                message, "Вы отправили пересланное аудио. Обрабатываю...")
+        # Определяем тип файла и извлекаем данные
+        if message.audio:
+            file_id = message.audio.file_id
+            file_name = message.audio.file_name or f"audio_{message.message_id}.mp3"
+            file_size = message.audio.file_size
+            file_type = "audio"
+            ext = ".mp3"
+        elif message.voice:
+            file_id = message.voice.file_id
+            file_name = f"voice_{message.message_id}.ogg"
+            file_size = message.voice.file_size
+            file_type = "voice"
+            ext = ".ogg"
+        elif message.video:
+            file_id = message.video.file_id
+            file_name = message.video.file_name or f"video_{message.message_id}.mp4"
+            file_size = message.video.file_size
+            file_type = "video"
+            ext = ".mp4"
+        else:
+            raise ValueError("Неизвестный тип файла")
 
-        # Получение файла
+        logger.info(
+            f"Получен файл: {file_name}, file_id: {file_id}, размер: {file_size} байт")
+
+        logger.info(f"Сообщение от {message.chat.id}")
+
         file_info = bot.get_file(
-            message.audio.file_id if message.audio else message.voice.file_id)
+            message.audio.file_id if message.audio else message.voice.file_id
+        )
+
+        # ext = ".ogg" if message.voice else ".mp3"
+        # file_name = f"{message.chat.id}_{message.message_id}{ext}"
+
+        # Получаем file_path и скачиваем файл
+        file_info = bot.get_file(file_id)
+        file_path = AUDIO_SAVE_PATH / file_name
+
+        print(file_path)
+        print(file_name)
+
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # Определение имени файла
-        file_extension = ".ogg" if message.voice else ".mp3"
-        file_name = f"{message.chat.id}_{message.message_id}{file_extension}"
-        file_path = os.path.join(AUDIO_SAVE_PATH, file_name)
+        with open(file_path, "wb") as f:
+            f.write(downloaded_file)
 
-        # Сохранение файла
-        with open(file_path, "wb") as audio_file:
-            audio_file.write(downloaded_file)
+        bot.reply_to(message, "🎧 Распознаю аудио, подожди немного...")
+        text = recognizer.transcribe_audio(str(file_path))
 
-        logger.info(f"Аудиофайл сохранен: {file_path}")
-        bot.reply_to(
-            message, f"Аудиофайл сохранен: {file_name}. Начинаем распознавание")
+        print(text)
 
-        text = SpeechRecognizer.transcribe_audio(
-            file_path)
+        bot.reply_to(message, f"🗣 Распознанный текст:\n{text}")
 
-        logger.info(f"Распознанный текст: {text}")
-        bot.reply_to(message, f"распознанные слова: {text}")
-
-        logger.info(f"Распознавание завершено. ожидание")
-
+        # summary = recognizer.summarize_text(text)
+        # if summary:
+        #     bot.reply_to(message, f"📝 Краткий пересказ:\n{summary}")
 
     except Exception as e:
-        bot.reply_to(
-            message, f"Произошла ошибка при обработке аудиофайла: {str(e)}")
+        logger.exception("Ошибка при обработке аудио")
+        bot.reply_to(message, f"⚠️ Ошибка: {e}")
 
 
 @bot.message_handler(func=lambda message: True)
@@ -92,8 +113,18 @@ def echo_all(message):
 
 
 def start_bot():
-    print("Бот запущен...")
-    bot.polling()
+
+    while True:
+        try:
+            logger.info("Бот запущен, ожидание сообщений...")
+            # bot.polling(none_stop=True)
+            bot.polling(none_stop=True, interval=3, timeout=20)
+        except ApiTelegramException as e:
+            logger.error(f"Ошибка Telegram API: {str(e)}")
+            time.sleep(15)  # Ждём перед перезапуском
+        except Exception as e:
+            logger.error(f"Общая ошибка: {str(e)}")
+            time.sleep(15)  # Ждём перед перезапуском
 
 
 if __name__ == "__main__":
