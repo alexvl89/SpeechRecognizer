@@ -6,7 +6,7 @@ import time
 import telebot
 from dotenv import load_dotenv
 
-from speech_recognizer import SpeechRecognizer
+from speech_recognizer_fast import SpeechRecognizerFast
 from telebot.apihelper import ApiTelegramException
 
 
@@ -30,7 +30,7 @@ bot = telebot.TeleBot(API_KEY)
 AUDIO_SAVE_PATH = Path("audio_files/input")
 AUDIO_SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
-recognizer = SpeechRecognizer()
+recognizer = SpeechRecognizerFast()
 
 # ────────────────────────────────
 # Обработчики
@@ -96,7 +96,11 @@ def handle_audio(message):
 
         print(text)
 
-        bot.reply_to(message, f"🗣 Распознанный текст:\n{text}")
+        # максимальная длина текста
+        MAX_LEN = 4000
+        for chunk in [text[i:i+MAX_LEN] for i in range(0, len(text), MAX_LEN)]:
+            # bot.send_message(chat_id, chunk)
+            bot.reply_to(message, f"🗣 Распознанный текст:\n{chunk}")
 
         # summary = recognizer.summarize_text(text)
         # if summary:

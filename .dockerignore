@@ -1,0 +1,6 @@
+__pycache__
+*.pyc
+.git
+.venv
+audio_files/  # Если не хотите копировать большие файлы; используйте volume
+.env

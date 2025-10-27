@@ -1,0 +1,22 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+      - audio_data:/app/audio_files
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - NAME_BOT=${NAME_BOT}
+      - API_KEY=${API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+    ports:
+      - "8000:8000"
+    command: python main.py
+
+volumes:
+  audio_data:
