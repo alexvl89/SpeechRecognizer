@@ -21,6 +21,7 @@ AUDIO_SAVE_NORM = Path("audio_files/normalized")
 AUDIO_SAVE_NORM.mkdir(parents=True, exist_ok=True)
 
 
+
 class SpeechRecognizerFast:
     """Класс для распознавания речи с использованием faster-whisper и (опционально) суммаризации текста."""
 
@@ -31,60 +32,60 @@ class SpeechRecognizerFast:
     _model_cache = None
     _summarizer_cache = None
 
-    # @classmethod
-    # def _get_model(cls):
-    #     """Ленивая загрузка модели faster-whisper."""
-    #     if cls._model_cache is None:
-    #         logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
-    #         cls._model_cache = WhisperModel(
-    #             model_size_or_path="large-v2",
-    #             device=cls.device,
-    #             compute_type=cls.compute_type
-    #         )
-    #     return cls._model_cache
 
     @classmethod
     def _get_model(cls):
         """Ленивая загрузка модели faster-whisper."""
-        if cls._model_cache is None:
-            logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
-            # Относительный путь *в windows убрать первый /)
-            model_path = "app/models/faster-whisper-large-v2"
-            # Абсолютный путь для отладки
-            full_path = os.path.join(os.getcwd(), model_path)
-            logger.info(f"Проверка пути {full_path}")
+        if cls._model_cache is not None:
+            return cls._model_cache
 
-            if os.path.exists(full_path) and os.path.isdir(full_path):
-                try:
-                    logger.info(
+        logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
+        # Относительный путь *в windows убрать первый /)
+        model_path = "app/models/faster-whisper-large-v2"
+        # Абсолютный путь для отладки
+        full_path = os.path.join(os.getcwd(), model_path)
+        # Папка, где должна храниться модель
+        # full_path = os.path.join(
+        #     os.getcwd(), "app", "models", "faster-whisper-large-v2")
+        logger.info(f"Проверка пути: {full_path}")
+
+        if os.path.exists(full_path) and os.path.isdir(full_path):
+            try:
+                logger.info(
                         f"Содержимое {full_path}: {os.listdir(full_path)}")
                     # Пытаемся загрузить локальную модель
-                    cls._model_cache = WhisperModel(
-                        model_size_or_path=model_path,
+                cls._model_cache = WhisperModel(
+                    model_size_or_path=full_path,
                         device=cls.device,
                         compute_type=cls.compute_type,
                         local_files_only=True
                     )
-                    logger.info("Локальная модель успешно загружена.")
-                except Exception as e:
-                    logger.error(f"Ошибка загрузки локальной модели: {e}")
-                    logger.info("Попытка загрузки модели с Hugging Face...")
-                    # Загружаем с Hugging Face, если локальная модель не работает
-                    cls._model_cache = WhisperModel(
-                        model_size_or_path="large-v2",
-                        device=cls.device,
-                        compute_type=cls.compute_type
-                    )
-            else:
-                logger.info(
-                    f"Локальная модель не найдена в {full_path}. Загрузка с Hugging Face...")
-                # Загружаем с Hugging Face, если папка отсутствует
-                cls._model_cache = WhisperModel(
-                    model_size_or_path="large-v2",
-                    device=cls.device,
-                    compute_type=cls.compute_type
-                )
-        return cls._model_cache
+                logger.info("Локальная модель успешно загружена.")
+            except Exception as e:
+                logger.error(f"Ошибка загрузки локальной модели: {e}")
+
+        try:
+            # Если локальная модель отсутствует или не загрузилась → скачиваем
+            logger.info("Загрузка модели с Hugging Face...")
+            os.makedirs(full_path, exist_ok=True)
+            hf_token = os.getenv("YOUR_HF_TOKEN")
+            if not hf_token:
+                logger.warning(
+                    "⚠️ Токен HF_TOKEN не найден в окружении — загрузка может быть ограничена.")
+
+            cls._model_cache = WhisperModel(
+                "large-v2",
+                device=cls.device,
+                compute_type=cls.compute_type,
+                download_root=full_path,
+                hf_token=hf_token
+            )
+
+            logger.info("✅ Модель успешно загружена с Hugging Face.")
+            return cls._model_cache
+        except Exception as e:
+            logger.error(f"Ошибка загрузки модели с Hugging Face: {e}")
+
 
     @staticmethod
     def _log_devices():
@@ -152,37 +153,7 @@ class SpeechRecognizerFast:
                 str(wav_path),
                 beam_size=5,
                 language="ru",
-                batch_size=cls.batch_size
-            )
-
-            # Объединяем текст из сегментов
-            text = " ".join(segment.text for segment in segments).strip()
-            logger.info(f"Распознанный текст ({len(text)} символов)")
-
-            return text
-
-        finally:
-            wav_path.unlink(missing_ok=True)
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()@classmethod
-
-
-    def transcribe_audio(cls, input_path: str) -> str:
-        """Распознаёт речь из аудиофайла и возвращает текст."""
-        cls._log_devices()
-
-        input_path = Path(input_path)
-        wav_path = AUDIO_SAVE_NORM / f"{input_path.stem}.wav"
-        cls.preprocess_audio(input_path, wav_path)
-
-        try:
-            model = cls._get_model()
-            # Транскрибация с faster-whisper
-            segments, info = model.transcribe(
-                str(wav_path),
-                beam_size=5,
-                language="ru"
+                # batch_size=cls.batch_size
             )
 
             # Объединяем текст из сегментов
