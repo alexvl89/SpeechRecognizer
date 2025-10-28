@@ -45,27 +45,25 @@ def send_welcome(message):
 @bot.message_handler(content_types=["audio", "voice", "video"])
 def handle_audio(message):
     try:
-        # Определяем тип файла и извлекаем данные
+       # Определяем тип файла и параметры
         if message.audio:
             file_id = message.audio.file_id
-            file_name = message.audio.file_name or f"audio_{message.message_id}.mp3"
+            file_name = message.audio.file_name or f"audio_{message.message_id}"
             file_size = message.audio.file_size
             file_type = "audio"
-            ext = ".mp3"
         elif message.voice:
             file_id = message.voice.file_id
-            file_name = f"voice_{message.message_id}.ogg"
+            file_name = f"voice_{message.message_id}"
             file_size = message.voice.file_size
             file_type = "voice"
-            ext = ".ogg"
         elif message.video:
             file_id = message.video.file_id
-            file_name = message.video.file_name or f"video_{message.message_id}.mp4"
+            file_name = message.video.file_name or f"video_{message.message_id}"
             file_size = message.video.file_size
             file_type = "video"
-            ext = ".mp4"
         else:
-            raise ValueError("Неизвестный тип файла")
+            bot.reply_to(message, "Неизвестный тип файла.")
+            return
 
         logger.info(
             f"Получен файл: {file_name}, file_id: {file_id}, размер: {file_size} байт")
@@ -75,6 +73,19 @@ def handle_audio(message):
         file_info = bot.get_file(
             message.audio.file_id if message.audio else message.voice.file_id
         )
+
+        original_extension = os.path.splitext(file_info.file_path)[1].lower()
+
+        # Проверка формата
+        supported_formats = ['.ogg', '.oga', '.mp3', '.wav', '.m4a', '.flac']
+
+        if original_extension not in supported_formats:
+            bot.reply_to(
+                message,
+                f"Формат файла {original_extension} не поддерживается.\n"
+                f"Поддерживаемые форматы: {', '.join(f.upper() for f in supported_formats)}."
+            )
+            return
 
         # ext = ".ogg" if message.voice else ".mp3"
         # file_name = f"{message.chat.id}_{message.message_id}{ext}"

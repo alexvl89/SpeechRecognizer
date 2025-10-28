@@ -49,7 +49,7 @@ class SpeechRecognizerFast:
         if cls._model_cache is None:
             logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
             # Относительный путь *в windows убрать первый /)
-            model_path = "/app/models/faster-whisper-large-v2"
+            model_path = "app/models/faster-whisper-large-v2"
             # Абсолютный путь для отладки
             full_path = os.path.join(os.getcwd(), model_path)
             logger.info(f"Проверка пути {full_path}")
