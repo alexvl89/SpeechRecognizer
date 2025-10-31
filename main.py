@@ -11,7 +11,7 @@ from telebot.apihelper import ApiTelegramException
 from multiprocessing import Process, Queue
 import gc
 import torch
-
+from user_manager import UserManager
 
 # ────────────────────────────────
 # Настройка логирования
@@ -33,6 +33,9 @@ bot = telebot.TeleBot(API_KEY)
 AUDIO_SAVE_PATH = Path("audio_files/input")
 AUDIO_SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # замени на свой Telegram ID
+user_manager = UserManager(admin_id=ADMIN_ID)
+
 recognizer = SpeechRecognizerFast()
 
 # ────────────────────────────────
@@ -48,6 +51,28 @@ def send_welcome(message):
 @bot.message_handler(content_types=["audio", "voice", "video"])
 def handle_audio(message):
     try:
+        user_id = message.chat.id
+
+        # Проверяем разрешён ли пользователь
+        if not user_manager.is_allowed(user_id):
+            bot.reply_to(
+                message, "⛔ У вас нет доступа к этому боту. Запрос отправлен администратору.")
+
+            # Уведомляем администратора
+            try:
+                bot.send_message(
+                    user_manager.admin_id,
+                    f"🚫 Неизвестный пользователь пытается использовать бота:\n"
+                    f"👤 Имя: {message.from_user.full_name}\n"
+                    f"💬 Username: @{message.from_user.username or '—'}\n"
+                    f"🆔 ID: {user_id}\n\n"
+                    f"Добавить его можно командой:\n/adduser {user_id}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при уведомлении администратора: {e}")
+            return
+
+
        # Определяем тип файла и параметры
         if message.audio:
             file_id = message.audio.file_id
@@ -145,6 +170,37 @@ def handle_audio(message):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@bot.message_handler(commands=["adduser"])
+def add_user_command(message):
+    if message.chat.id != user_manager.admin_id:
+        bot.reply_to(
+            message, "🚫 Только администратор может добавлять пользователей.")
+        return
+
+    try:
+        _, new_user_id = message.text.split(maxsplit=1)
+        new_user_id = int(new_user_id)
+        user_manager.add_user(new_user_id)
+        bot.reply_to(message, f"✅ Пользователь {new_user_id} добавлен.")
+    except Exception:
+        bot.reply_to(message, "Использование: /adduser <user_id>")
+
+
+@bot.message_handler(commands=["listusers"])
+def list_users_command(message):
+    if message.chat.id != user_manager.admin_id:
+        bot.reply_to(
+            message, "🚫 Только администратор может смотреть список пользователей.")
+        return
+
+    users = user_manager.list_users()
+    if not users:
+        bot.reply_to(message, "📭 Список пуст.")
+    else:
+        bot.reply_to(message, "📜 Разрешённые пользователи:\n" +
+                     "\n".join(map(str, users)))
 
 # === ВНЕ handle_audio, на уровне модуля ===
 

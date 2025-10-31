@@ -6,6 +6,7 @@ test.py
 audio_files
 normalized_audio.wav
 silence.wav
+allowed_users.json
 
 # Python-specific ignores
 __pycache__/
