@@ -1,8 +1,9 @@
 services:
-  app:
+  speech-recognizer:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: speech-recognizer
     volumes:
       - .:/app
       - audio_data:/app/audio_files
@@ -14,9 +15,8 @@ services:
       - NAME_BOT=${NAME_BOT}
       - API_KEY=${API_KEY}
       - HF_TOKEN=${HF_TOKEN}
-    ports:
-      - "8000:8000"
     command: python main.py
+    restart: unless-stopped
 
 volumes:
   audio_data:

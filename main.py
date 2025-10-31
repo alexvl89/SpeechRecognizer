@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 
 from speech_recognizer_fast import SpeechRecognizerFast
 from telebot.apihelper import ApiTelegramException
+from multiprocessing import Process, Queue
+import gc
+import torch
 
 
 # ────────────────────────────────
@@ -103,14 +106,25 @@ def handle_audio(message):
             f.write(downloaded_file)
 
         bot.reply_to(message, "🎧 Распознаю аудио, подожди немного...")
-        text = recognizer.transcribe_audio(str(file_path))
 
-        print(text)
+        # === Запуск распознавания в отдельном процессе ===
+        queue = Queue()
+        p = Process(target=audio_worker, args=(str(file_path), queue))
+        p.start()
+        p.join(timeout=600)
 
-        # максимальная длина текста
+        if p.is_alive():
+            p.terminate()
+            p.join()  # важно!
+            raise TimeoutError("Превышено время обработки")
+
+        text = queue.get()
+
+        # === Отправляем результат ===
         MAX_LEN = 4000
-        for chunk in [text[i:i+MAX_LEN] for i in range(0, len(text), MAX_LEN)]:
-            # bot.send_message(chat_id, chunk)
+        chunks = split_text_by_chars(text, MAX_LEN)
+
+        for chunk in chunks:
             bot.reply_to(message, f"🗣 Распознанный текст:\n{chunk}")
 
         # summary = recognizer.summarize_text(text)
@@ -120,11 +134,63 @@ def handle_audio(message):
     except Exception as e:
         logger.exception("Ошибка при обработке аудио")
         bot.reply_to(message, f"⚠️ Ошибка: {e}")
+    finally:
+        # === Очистка ===
+        try:
+            if file_path.exists():
+                file_path.unlink()
+        except Exception:
+            pass
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+# === ВНЕ handle_audio, на уровне модуля ===
+
+
+def audio_worker(audio_path: str, result_queue: Queue):
+    """
+    Должна быть определена на верхнем уровне модуля.
+    Ничего не принимает из главного процесса, кроме примитивов.
+    """
+    try:
+        # Создаём recognizer ЗДЕСЬ, в дочернем процессе
+        recognizer = SpeechRecognizerFast()
+        text = recognizer.transcribe_audio(audio_path)
+        result_queue.put(text)
+    except Exception as e:
+        result_queue.put(f"[ОШИБКА] {e}")
+    finally:
+        # Очистка
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
     bot.reply_to(message, message.text)
+
+
+def split_text_by_chars(text: str, max_len: int):
+    """Разбивает текст на куски до max_len символов, не разрывая слова."""
+    chunks = []
+    start = 0
+    while start < len(text):
+        if len(text) - start <= max_len:
+            # Остаток текста меньше лимита — добавляем всё
+            chunks.append(text[start:].strip())
+            break
+
+        # Ищем ближайший пробел перед границей max_len
+        end = text.rfind(" ", start, start + max_len)
+        if end == -1:
+            # Если пробела нет, просто режем по лимиту
+            end = start + max_len
+        chunks.append(text[start:end].strip())
+        start = end + 1  # начинаем после пробела
+    return chunks
 
 
 def start_bot():

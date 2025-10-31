@@ -40,115 +40,6 @@ class SpeechRecognizerFast:
         compute_type="float16" if torch.cuda.is_available() else "int8"
     )
 
-    # @classmethod
-    # def _get_model(cls):
-    #     """Ленивая загрузка модели faster-whisper."""
-    #     if cls._model_cache is not None:
-    #         return cls._model_cache
-
-    #     logger.info(f"Загрузка модели faster-whisper ({cls.device})...")
-    #     # Относительный путь *в windows убрать первый /)
-    #     model_path = "app2/models/faster-whisper-large-v2"
-    #     # Абсолютный путь для отладки
-    #     full_path = os.path.join(os.getcwd(), model_path)
-    #     # Папка, где должна храниться модель
-    #     # full_path = os.path.join(
-    #     #     os.getcwd(), "app", "models", "faster-whisper-large-v2")
-    #     logger.info(f"Проверка пути: {full_path}")
-
-    #     if os.path.exists(full_path) and os.path.isdir(full_path):
-    #         try:
-    #             logger.info(f"Содержимое {full_path}: {os.listdir(full_path)}")
-
-    #             # Шаг 1: Проверяем наличие основных файлов в корне (если модель распакована напрямую)
-    #             required_files = ["model.bin", "tokenizer.json"]
-    #             missing_files = [f for f in required_files if not os.path.exists(
-    #                 os.path.join(full_path, f))]
-
-    #             if not missing_files:
-    #                 # Пытаемся загрузить локальную модель
-    #                 cls._model_cache = WhisperModel(
-    #                     model_size_or_path=full_path,
-    #                     device=cls.device,
-    #                     compute_type=cls.compute_type,
-    #                     local_files_only=True
-    #                 )
-    #                 logger.info("Локальная модель успешно загружена.")
-    #                 return cls._model_cache
-
-    #             # Шаг 2: Проверяем структуру кэша Hugging Face (models--.../snapshots/<хеш>/)
-    #             huggingface_dir = os.path.join(
-    #                 full_path, "models--Systran--faster-whisper-large-v2")
-    #             if os.path.exists(huggingface_dir):
-    #                 snapshots_dir = os.path.join(huggingface_dir, "snapshots")
-
-    #                 if os.path.exists(snapshots_dir):
-    #                     # Получаем список хешей версий (подкаталогов в snapshots)
-    #                     snapshot_hashes = [
-    #                         d for d in os.listdir(snapshots_dir)
-    #                         if os.path.isdir(os.path.join(snapshots_dir, d))
-    #                     ]
-    #                     if snapshot_hashes:
-    #                         # Берём последний по алфавиту хеш (обычно самый свежий)
-    #                         latest_hash = max(snapshot_hashes)
-    #                         model_path = os.path.join(
-    #                             snapshots_dir, latest_hash)
-
-    #                         # Проверяем файлы внутри snapshot
-    #                         missing_in_snapshot = [
-    #                             f for f in required_files
-    #                             if not os.path.exists(os.path.join(model_path, f))
-    #                         ]
-    #                         if not missing_in_snapshot:
-    #                             logger.info(
-    #                                 f"Модель найдена в snapshot: {model_path}. Загрузка...")
-    #                             cls._model_cache = WhisperModel(
-    #                                 model_size_or_path=model_path,
-    #                                 device=cls.device,
-    #                                 compute_type=cls.compute_type,
-    #                                 local_files_only=True
-    #                             )
-    #                             logger.info(
-    #                                 "Локальная модель из snapshot успешно загружена.")
-    #                             return cls._model_cache
-    #                         else:
-    #                             logger.error(
-    #                                 f"В snapshot {latest_hash} отсутствуют файлы: {missing_in_snapshot}")
-    #                     else:
-    #                         logger.error(
-    #                             "Нет доступных snapshot-версий в папке snapshots/")
-    #                 else:
-    #                     logger.error(
-    #                         "Папка snapshots/ не найдена в структуре Hugging Face.")
-    #             else:
-    #                 logger.warning(
-    #                     "Структура Hugging Face (models--...) не обнаружена.")
-
-    #         except Exception as e:
-    #             logger.error(f"Ошибка загрузки локальной модели: {e}")
-
-    #     try:
-    #         # Если локальная модель отсутствует или не загрузилась → скачиваем
-    #         logger.info("Загрузка модели с Hugging Face...")
-    #         os.makedirs(full_path, exist_ok=True)
-    #         hf_token = os.getenv("HF_TOKEN")
-    #         if not hf_token:
-    #             logger.warning(
-    #                 "⚠️ Токен HF_TOKEN не найден в окружении — загрузка может быть ограничена.")
-
-    #         cls._model_cache = WhisperModel(
-    #             "large-v2",
-    #             device=cls.device,
-    #             compute_type=cls.compute_type,
-    #             download_root=full_path,
-    #             hf_token=hf_token
-    #         )
-
-    #         logger.info("✅ Модель успешно загружена с Hugging Face.")
-    #         return cls._model_cache
-    #     except Exception as e:
-    #         logger.error(f"Ошибка загрузки модели с Hugging Face: {e}")
-
 
     @staticmethod
     def _log_devices():
@@ -185,9 +76,12 @@ class SpeechRecognizerFast:
             .set_sample_width(2)
         )
 
-        # Нормализация и добавление 3 секунд тишины в конец
+        # Нормализация
         audio = effects.normalize(audio)
-        audio += AudioSegment.silent(duration=3000)
+
+        # Добавляем 3 секунды тишины только если длительность > 2 секунд
+        if len(audio) > 2000:  # длина в миллисекундах
+            audio += AudioSegment.silent(duration=3000)
 
         # Создание каталога для выходного файла
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,11 +122,19 @@ class SpeechRecognizerFast:
             return text
 
         finally:
+            # Удаляем временный WAV-файл
             wav_path.unlink(missing_ok=True)
+            # Выгружаем модель из памяти
+            try:
+                cls._model_manager.cleanup()
+            except Exception as e:
+                logger.warning(f"Ошибка при выгрузке модели: {e}")
+
+            # Принудительная очистка Python- и CUDA-памяти
+            import gc
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
 
     @classmethod
     def summarize_text(cls, text: str, max_length: int = 60) -> Optional[str]:

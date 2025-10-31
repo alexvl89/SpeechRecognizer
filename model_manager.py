@@ -74,7 +74,6 @@ class WhisperModelManager:
                 compute_type=self.compute_type,
                 download_root=str(model_dir),
                 local_files_only=False,
-                hf_token=hf_token
             )
             logger.info("Модель успешно загружена с Hugging Face.")
             return model

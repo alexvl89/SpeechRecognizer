@@ -26,3 +26,6 @@ venv/
 .vscode/
 .idea/
 app/*
+models/*
+data/*
+audio_files/*
