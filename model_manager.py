@@ -27,7 +27,7 @@ class WhisperModelManager:
         self.download_root = download_root or os.path.join(
             os.getcwd(), "app", "models", "faster-whisper-large-v2")
         self.required_files = ["model.bin", "tokenizer.json",
-                               "config.json", "preprocessor_config.json"]
+                               "config.json"]
 
     def __new__(cls, *args, **kwargs):
         """Синглтон: только один экземпляр менеджера."""

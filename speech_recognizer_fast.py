@@ -80,7 +80,7 @@ class SpeechRecognizerFast:
         audio = effects.normalize(audio)
 
         # Добавляем 3 секунды тишины только если длительность > 2 секунд
-        if len(audio) > 2000:  # длина в миллисекундах
+        if len(audio) < 2000:  # длина в миллисекундах
             audio += AudioSegment.silent(duration=3000)
 
         # Создание каталога для выходного файла
