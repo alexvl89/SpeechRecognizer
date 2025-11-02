@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional
 from faster_whisper import WhisperModel
 import torch
+import uuid
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class WhisperModelManager:
         compute_type: str = "float16",
         model_name: str = "Systran/faster-whisper-large-v2",
         download_root: Optional[str] = None
+
+
     ):
         self.device = device
         self.compute_type = compute_type
@@ -28,6 +32,11 @@ class WhisperModelManager:
             os.getcwd(), "app", "models", "faster-whisper-large-v2")
         self.required_files = ["model.bin", "tokenizer.json",
                                "config.json"]
+
+        self.pid = os.getpid()
+        self.uid = str(uuid.uuid4())[:8]
+        logger.info(
+            f"[PID {self.pid}] WhisperModelManager создан, uid={self.uid}")
 
     def __new__(cls, *args, **kwargs):
         """Синглтон: только один экземпляр менеджера."""
@@ -42,6 +51,8 @@ class WhisperModelManager:
 
         logger.info(f"Загрузка модели faster-whisper на {self.device}...")
         self._model = self._load_model()
+        logger.info(
+            f"[PID {os.getpid()}] get_model → _model={'exists' if self._model else 'None'}")
         return self._model
 
     def _load_model(self) -> WhisperModel:

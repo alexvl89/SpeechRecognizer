@@ -1,11 +1,11 @@
 import gc
-import os
+import time
 import logging
 from pathlib import Path
 from typing import Optional
+import threading
 
 import torch
-from faster_whisper import WhisperModel
 from pydub import AudioSegment, effects
 import mimetypes
 from model_manager import WhisperModelManager
@@ -33,6 +33,12 @@ class SpeechRecognizerFast:
     batch_size =  5 # Увеличен для faster-whisper, так как он более оптимизирован
     _model_cache = None
     _summarizer_cache = None
+
+    _last_use_time = 0
+    _cleanup_timer = None
+    _cleanup_delay = 600  # 10 минут
+    _lock = threading.Lock()
+
 
     # Инициализируем менеджер один раз
     _model_manager = WhisperModelManager(
@@ -79,7 +85,7 @@ class SpeechRecognizerFast:
         # Нормализация
         audio = effects.normalize(audio)
 
-        # Добавляем 3 секунды тишины только если длительность > 2 секунд
+        # Добавляем 3 секунды тишины только если длительность < 2 секунд
         if len(audio) < 2000:  # длина в миллисекундах
             audio += AudioSegment.silent(duration=3000)
 
@@ -119,22 +125,18 @@ class SpeechRecognizerFast:
             text = " ".join(segment.text for segment in segments).strip()
             logger.info(f"Распознанный текст ({len(text)} символов)")
 
+            # if (model is not None):
+            #     logger.info(f"модель не пуская")
             return text
 
         finally:
             # Удаляем временный WAV-файл
             wav_path.unlink(missing_ok=True)
-            # Выгружаем модель из памяти
-            try:
-                cls._model_manager.cleanup()
-            except Exception as e:
-                logger.warning(f"Ошибка при выгрузке модели: {e}")
 
-            # Принудительная очистка Python- и CUDA-памяти
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            cls._touch_activity()
+
+
+
 
     @classmethod
     def summarize_text(cls, text: str, max_length: int = 60) -> Optional[str]:
@@ -153,3 +155,54 @@ class SpeechRecognizerFast:
         summary = summarizer(text, max_length=max_length,
                              min_length=10, do_sample=False)
         return summary[0]["summary_text"].strip()
+
+    @classmethod
+    def _touch_activity(cls):
+        """Обновляет время последнего использования и перезапускает таймер очистки."""
+        with cls._lock:
+            cls._last_use_time = time.time()
+            cls._start_cleanup_timer()
+
+    @classmethod
+    def _start_cleanup_timer(cls):
+        """Безопасно перезапускает таймер очистки."""
+        # Завершить старый таймер
+        if cls._cleanup_timer and cls._cleanup_timer.is_alive():
+            cls._cleanup_timer.cancel()
+            cls._cleanup_timer = None
+
+        cls._cleanup_timer = threading.Timer(
+            cls._cleanup_delay, cls._try_cleanup)
+        cls._cleanup_timer.daemon = True
+        cls._cleanup_timer.start()
+
+    @classmethod
+    def _try_cleanup(cls):
+        """Проверяет, прошло ли достаточно времени без активности, и выгружает модель."""
+        with cls._lock:
+            idle_time = time.time() - cls._last_use_time
+            if idle_time < cls._cleanup_delay:
+                # Активность была недавно — переносим очистку
+                remaining = cls._cleanup_delay - idle_time
+                logger.info(
+                    f"⏰ Новая активность — перенос очистки через {remaining:.1f} сек.")
+                cls._cleanup_timer = threading.Timer(
+                    remaining, cls._try_cleanup)
+                cls._cleanup_timer.daemon = True
+                cls._cleanup_timer.start()
+                return
+
+            # Очистка модели
+            logger.info(
+                "⏳ 10 минут без активности — освобождаю модель из памяти...")
+            try:
+                cls._model_manager.cleanup()
+            except Exception as e:
+                logger.warning(f"Ошибка при очистке модели: {e}")
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info("✅ Модель успешно выгружена из памяти.")
+            cls._cleanup_timer = None

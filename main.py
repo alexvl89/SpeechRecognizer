@@ -132,18 +132,26 @@ def handle_audio(message):
 
         bot.reply_to(message, "🎧 Распознаю аудио, подожди немного...")
 
-        # === Запуск распознавания в отдельном процессе ===
-        queue = Queue()
-        p = Process(target=audio_worker, args=(str(file_path), queue))
-        p.start()
-        p.join(timeout=600)
+        start_time = time.time()
 
-        if p.is_alive():
-            p.terminate()
-            p.join()  # важно!
-            raise TimeoutError("Превышено время обработки")
+        # # === Запуск распознавания в отдельном процессе ===
+        # queue = Queue()
+        # p = Process(target=audio_worker, args=(str(file_path), queue))
+        # p.start()
+        # p.join(timeout=600)
 
-        text = queue.get()
+        # if p.is_alive():
+        #     p.terminate()
+        #     p.join()  # важно!
+        #     raise TimeoutError("Превышено время обработки")
+
+        # text = queue.get()
+        text = recognizer.transcribe_audio(str(file_path))
+
+        duration = time.time() - start_time
+        duration_text = f"⏱ Время распознавания: {duration:.2f} сек."
+
+        bot.reply_to(message, duration_text)
 
         # === Отправляем результат ===
         MAX_LEN = 4000
@@ -167,9 +175,9 @@ def handle_audio(message):
         except Exception:
             pass
 
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # gc.collect()
+        # if torch.cuda.is_available():
+        #     torch.cuda.empty_cache()
 
 
 @bot.message_handler(commands=["adduser"])
@@ -212,16 +220,16 @@ def audio_worker(audio_path: str, result_queue: Queue):
     """
     try:
         # Создаём recognizer ЗДЕСЬ, в дочернем процессе
-        recognizer = SpeechRecognizerFast()
+        # recognizer = SpeechRecognizerFast()
         text = recognizer.transcribe_audio(audio_path)
         result_queue.put(text)
     except Exception as e:
         result_queue.put(f"[ОШИБКА] {e}")
-    finally:
-        # Очистка
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    # finally:
+    #     # Очистка
+    #     gc.collect()
+    #     if torch.cuda.is_available():
+    #         torch.cuda.empty_cache()
 
 
 @bot.message_handler(func=lambda message: True)
