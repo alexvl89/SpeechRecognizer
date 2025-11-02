@@ -3,12 +3,16 @@ import os
 from pathlib import Path
 import time
 
+from threading import Thread, Lock
+from queue import Queue
+from typing import Tuple
+
 import telebot
 from dotenv import load_dotenv
 
 from speech_recognizer_fast import SpeechRecognizerFast
 from telebot.apihelper import ApiTelegramException
-from multiprocessing import Process, Queue
+from queue import Queue
 import gc
 import torch
 from user_manager import UserManager
@@ -38,6 +42,12 @@ user_manager = UserManager(admin_id=ADMIN_ID)
 
 recognizer = SpeechRecognizerFast()
 
+
+# Очередь задач: (message, file_path)
+task_queue = Queue()
+queue_lock = Lock()
+is_processing = False
+
 # ────────────────────────────────
 # Обработчики
 
@@ -48,136 +58,13 @@ def send_welcome(message):
     bot.reply_to(message, "🎙 Отправь голосовое сообщение, и я его расшифрую!")
 
 
-@bot.message_handler(content_types=["audio", "voice", "video"])
-def handle_audio(message):
-    try:
-        user_id = message.chat.id
-
-        # Проверяем разрешён ли пользователь
-        if not user_manager.is_allowed(user_id):
-            bot.reply_to(
-                message, "⛔ У вас нет доступа к этому боту. Запрос отправлен администратору.")
-
-            # Уведомляем администратора
-            try:
-                bot.send_message(
-                    user_manager.admin_id,
-                    f"🚫 Неизвестный пользователь пытается использовать бота:\n"
-                    f"👤 Имя: {message.from_user.full_name}\n"
-                    f"💬 Username: @{message.from_user.username or '—'}\n"
-                    f"🆔 ID: {user_id}\n\n"
-                    f"Добавить его можно командой:\n/adduser {user_id}"
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при уведомлении администратора: {e}")
-            return
-
-
-       # Определяем тип файла и параметры
-        if message.audio:
-            file_id = message.audio.file_id
-            file_name = message.audio.file_name or f"audio_{message.message_id}"
-            file_size = message.audio.file_size
-            file_type = "audio"
-        elif message.voice:
-            file_id = message.voice.file_id
-            file_name = f"voice_{message.message_id}"
-            file_size = message.voice.file_size
-            file_type = "voice"
-        elif message.video:
-            file_id = message.video.file_id
-            file_name = message.video.file_name or f"video_{message.message_id}"
-            file_size = message.video.file_size
-            file_type = "video"
-        else:
-            bot.reply_to(message, "Неизвестный тип файла.")
-            return
-
-        logger.info(
-            f"Получен файл: {file_name}, file_id: {file_id}, размер: {file_size} байт")
-
-        logger.info(f"Сообщение от {message.chat.id}")
-
-        file_info = bot.get_file(
-            message.audio.file_id if message.audio else message.voice.file_id
-        )
-
-        original_extension = os.path.splitext(file_info.file_path)[1].lower()
-
-        # Проверка формата
-        supported_formats = ['.ogg', '.oga', '.mp3', '.wav', '.m4a', '.flac']
-
-        if original_extension not in supported_formats:
-            bot.reply_to(
-                message,
-                f"Формат файла {original_extension} не поддерживается.\n"
-                f"Поддерживаемые форматы: {', '.join(f.upper() for f in supported_formats)}."
-            )
-            return
-
-        # ext = ".ogg" if message.voice else ".mp3"
-        # file_name = f"{message.chat.id}_{message.message_id}{ext}"
-
-        # Получаем file_path и скачиваем файл
-        file_info = bot.get_file(file_id)
-        file_path = AUDIO_SAVE_PATH / file_name
-
-        print(file_path)
-        print(file_name)
-
-        downloaded_file = bot.download_file(file_info.file_path)
-
-        with open(file_path, "wb") as f:
-            f.write(downloaded_file)
-
-        bot.reply_to(message, "🎧 Распознаю аудио, подожди немного...")
-
-        start_time = time.time()
-
-        # # === Запуск распознавания в отдельном процессе ===
-        # queue = Queue()
-        # p = Process(target=audio_worker, args=(str(file_path), queue))
-        # p.start()
-        # p.join(timeout=600)
-
-        # if p.is_alive():
-        #     p.terminate()
-        #     p.join()  # важно!
-        #     raise TimeoutError("Превышено время обработки")
-
-        # text = queue.get()
-        text = recognizer.transcribe_audio(str(file_path))
-
-        duration = time.time() - start_time
-        duration_text = f"⏱ Время распознавания: {duration:.2f} сек."
-
-        bot.reply_to(message, duration_text)
-
-        # === Отправляем результат ===
-        MAX_LEN = 4000
-        chunks = split_text_by_chars(text, MAX_LEN)
-
-        for chunk in chunks:
-            bot.reply_to(message, f"🗣 Распознанный текст:\n{chunk}")
-
-        # summary = recognizer.summarize_text(text)
-        # if summary:
-        #     bot.reply_to(message, f"📝 Краткий пересказ:\n{summary}")
-
-    except Exception as e:
-        logger.exception("Ошибка при обработке аудио")
-        bot.reply_to(message, f"⚠️ Ошибка: {e}")
-    finally:
-        # === Очистка ===
-        try:
-            if file_path.exists():
-                file_path.unlink()
-        except Exception:
-            pass
-
-        # gc.collect()
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+@bot.message_handler(commands=["queue"])
+def show_queue(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    size = task_queue.qsize()
+    status = "обрабатывается" if is_processing else "свободен"
+    bot.reply_to(message, f"Очередь: {size} задач | Статус: {status}")
 
 
 @bot.message_handler(commands=["adduser"])
@@ -210,8 +97,6 @@ def list_users_command(message):
         bot.reply_to(message, "📜 Разрешённые пользователи:\n" +
                      "\n".join(map(str, users)))
 
-# === ВНЕ handle_audio, на уровне модуля ===
-
 
 def audio_worker(audio_path: str, result_queue: Queue):
     """
@@ -225,11 +110,6 @@ def audio_worker(audio_path: str, result_queue: Queue):
         result_queue.put(text)
     except Exception as e:
         result_queue.put(f"[ОШИБКА] {e}")
-    # finally:
-    #     # Очистка
-    #     gc.collect()
-    #     if torch.cuda.is_available():
-    #         torch.cuda.empty_cache()
 
 
 @bot.message_handler(func=lambda message: True)
@@ -270,6 +150,151 @@ def start_bot():
         except Exception as e:
             logger.error(f"Общая ошибка: {str(e)}")
             time.sleep(15)  # Ждём перед перезапуском
+
+
+@bot.message_handler(content_types=["audio", "voice", "video"])
+def handle_audio(message):
+    try:
+        user_id = message.chat.id
+
+        # Проверяем разрешён ли пользователь
+        if not user_manager.is_allowed(user_id):
+            bot.reply_to(
+                message, "⛔ У вас нет доступа к этому боту. Запрос отправлен администратору.")
+
+            # Уведомляем администратора
+            try:
+                bot.send_message(
+                    user_manager.admin_id,
+                    f"🚫 Неизвестный пользователь пытается использовать бота:\n"
+                    f"👤 Имя: {message.from_user.full_name}\n"
+                    f"💬 Username: @{message.from_user.username or '—'}\n"
+                    f"🆔 ID: {user_id}\n\n"
+                    f"Добавить его можно командой:\n/adduser {user_id}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при уведомлении администратора: {e}")
+                return
+
+            # Определяем тип файла и параметры
+        if message.audio:
+            file_id = message.audio.file_id
+            file_name = message.audio.file_name or f"audio_{message.message_id}"
+            file_size = message.audio.file_size
+            file_type = "audio"
+        elif message.voice:
+            file_id = message.voice.file_id
+            file_name = f"voice_{message.message_id}"
+            file_size = message.voice.file_size
+            file_type = "voice"
+        elif message.video:
+            file_id = message.video.file_id
+            file_name = message.video.file_name or f"video_{message.message_id}"
+            file_size = message.video.file_size
+            file_type = "video"
+        else:
+            bot.reply_to(message, "Неизвестный тип файла.")
+            return
+
+        logger.info(
+            f"Получен файл: {file_name}, file_id: {file_id}, размер: {file_size} байт")
+
+        logger.info(f"Сообщение от {message.chat.id}")
+
+        file_info = bot.get_file(
+            message.audio.file_id if message.audio else message.voice.file_id
+        )
+
+        original_extension = os.path.splitext(
+            file_info.file_path)[1].lower()
+
+        # Проверка формата
+        supported_formats = ['.ogg', '.oga',
+                             '.mp3', '.wav', '.m4a', '.flac']
+
+        if original_extension not in supported_formats:
+            bot.reply_to(
+                message,
+                f"Формат файла {original_extension} не поддерживается.\n"
+                f"Поддерживаемые форматы: {', '.join(f.upper() for f in supported_formats)}."
+            )
+            return
+
+            # ext = ".ogg" if message.voice else ".mp3"
+            # file_name = f"{message.chat.id}_{message.message_id}{ext}"
+
+            # Получаем file_path и скачиваем файл
+        file_info = bot.get_file(file_id)
+        file_path = AUDIO_SAVE_PATH / file_name
+
+        print(file_path)
+        print(file_name)
+        # ... (весь код до скачивания файла) ...
+
+        downloaded_file = bot.download_file(file_info.file_path)
+        file_path = AUDIO_SAVE_PATH / file_name
+        with open(file_path, "wb") as f:
+            f.write(downloaded_file)
+
+        # Проверяем, есть ли уже кто-то в очереди
+        queue_size = task_queue.qsize()
+        if queue_size == 0:
+            bot.reply_to(message, "Принял голосовое. Начинаю распознавание...")
+        else:
+            bot.reply_to(
+                message, f"В очереди {queue_size} запрос(ов). Ожидайте...")
+
+        # Добавляем в очередь
+        task_queue.put((message, file_path))
+
+    except Exception as e:
+        logger.exception("Ошибка при приёме файла")
+        bot.reply_to(message, f"Ошибка: {e}")
+
+
+def transcription_worker():
+    global is_processing
+    while True:
+        message, file_path = task_queue.get()
+        if message is None:  # сигнал остановки
+            break
+
+        try:
+            with queue_lock:
+                is_processing = True
+
+            bot.send_message(message.chat.id, "Обрабатываю ваш запрос...")
+
+            start_time = time.time()
+            text = recognizer.transcribe_audio(str(file_path))
+
+            duration = time.time() - start_time
+            duration_text = f"Время распознавания: {duration:.2f} сек."
+
+            bot.send_message(message.chat.id, duration_text)
+
+            MAX_LEN = 4000
+            chunks = split_text_by_chars(text, MAX_LEN)
+            for chunk in chunks:
+                bot.send_message(
+                    message.chat.id, f"Распознанный текст:\n{chunk}")
+
+        except Exception as e:
+            bot.send_message(message.chat.id, f"Ошибка: {e}")
+            logger.exception("Ошибка в воркере")
+        finally:
+            try:
+                file_path.unlink()
+            except:
+                pass
+            with queue_lock:
+                is_processing = False
+            task_queue.task_done()
+
+
+# Запускаем при старте
+worker_thread = Thread(target=transcription_worker, daemon=True)
+worker_thread.start()
 
 
 if __name__ == "__main__":
