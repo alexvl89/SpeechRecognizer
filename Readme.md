@@ -17,7 +17,7 @@
 
 ```bash
 docker build -f base.Dockerfile -t my-python-base:latest .
-
+```
 
 🔗 Модели
 
