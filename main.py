@@ -1,3 +1,4 @@
+import subprocess
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from queue import Queue
 import gc
 import torch
 from user_manager import UserManager
+from version import __version__, __release_date__
 
 # ────────────────────────────────
 # Настройка логирования
@@ -47,6 +49,13 @@ recognizer = SpeechRecognizerFast()
 task_queue = Queue()
 queue_lock = Lock()
 is_processing = False
+
+friendly_names = {
+    "audio": "аудиофайл",
+    "voice": "голосовое сообщение",
+    "video": "видео",
+    "video_note": "видеокружочек"
+}
 
 # ────────────────────────────────
 # Обработчики
@@ -81,6 +90,14 @@ def add_user_command(message):
         bot.reply_to(message, f"✅ Пользователь {new_user_id} добавлен.")
     except Exception:
         bot.reply_to(message, "Использование: /adduser <user_id>")
+
+
+@bot.message_handler(commands=["version"])
+def show_version(message):
+    bot.reply_to(
+        message,
+        f"🤖 Версия бота: {__version__}\n📅 Дата релиза: {__release_date__}"
+    )
 
 
 @bot.message_handler(commands=["listusers"])
@@ -142,6 +159,8 @@ def start_bot():
     while True:
         try:
             logger.info("Бот запущен, ожидание сообщений...")
+            logger.info(
+                f"🤖 Версия бота: {__version__} 📅 Дата релиза: {__release_date__}")
             # bot.polling(none_stop=True)
             bot.polling(none_stop=True, interval=3, timeout=20)
         except ApiTelegramException as e:
@@ -152,7 +171,7 @@ def start_bot():
             time.sleep(15)  # Ждём перед перезапуском
 
 
-@bot.message_handler(content_types=["audio", "voice", "video"])
+@bot.message_handler(content_types=["audio", "voice", "video", "video_note"])
 def handle_audio(message):
     try:
         user_id = message.chat.id
@@ -192,6 +211,11 @@ def handle_audio(message):
             file_name = message.video.file_name or f"video_{message.message_id}"
             file_size = message.video.file_size
             file_type = "video"
+        elif message.video_note:
+            file_id = message.video_note.file_id
+            file_name = f"video_note_{message.message_id}.mp4"
+            file_size = message.video_note.file_size
+            file_type = "video_note"
         else:
             bot.reply_to(message, "Неизвестный тип файла.")
             return
@@ -201,35 +225,41 @@ def handle_audio(message):
 
         logger.info(f"Сообщение от {message.chat.id}")
 
-        file_info = bot.get_file(
-            message.audio.file_id if message.audio else message.voice.file_id
-        )
+        # file_info = bot.get_file(
+        #     message.audio.file_id if message.audio else message.voice.file_id
+        # )
 
-        original_extension = os.path.splitext(
-            file_info.file_path)[1].lower()
+        file_info = bot.get_file(file_id)
 
-        # Проверка формата
-        supported_formats = ['.ogg', '.oga',
-                             '.mp3', '.wav', '.m4a', '.flac']
+        original_extension = os.path.splitext(file_info.file_path)[1].lower()
 
-        if original_extension not in supported_formats:
-            bot.reply_to(
-                message,
-                f"Формат файла {original_extension} не поддерживается.\n"
-                f"Поддерживаемые форматы: {', '.join(f.upper() for f in supported_formats)}."
-            )
-            return
+        if file_type in ["audio", "voice"]:
+            # Проверка формата
+            supported_formats = ['.ogg', '.oga',
+                                 '.mp3', '.wav', '.m4a', '.flac']
+            if original_extension not in supported_formats:
+                bot.reply_to(
+                    message,
+                    f"Формат файла {original_extension} не поддерживается.\n"
+                    f"Поддерживаемые форматы: {', '.join(f.upper() for f in supported_formats)}."
+                )
+                return
+
+        if file_type in ["video", "video_note"]:
+            supported_video_formats = ['.mp4', '.mov', '.mkv']
+            if original_extension not in supported_video_formats:
+                bot.reply_to(message, "Формат видео не поддерживается.")
+                return
 
             # ext = ".ogg" if message.voice else ".mp3"
             # file_name = f"{message.chat.id}_{message.message_id}{ext}"
 
-            # Получаем file_path и скачиваем файл
-        file_info = bot.get_file(file_id)
+        # Получаем file_path и скачиваем файл
+        # file_info = bot.get_file(file_id)
         file_path = AUDIO_SAVE_PATH / file_name
 
         print(file_path)
         print(file_name)
-        # ... (весь код до скачивания файла) ...
 
         downloaded_file = bot.download_file(file_info.file_path)
         file_path = AUDIO_SAVE_PATH / file_name
@@ -238,11 +268,15 @@ def handle_audio(message):
 
         # Проверяем, есть ли уже кто-то в очереди
         queue_size = task_queue.qsize()
+
+        friendly = friendly_names.get(file_type, "файл")
+
         if queue_size == 0:
-            bot.reply_to(message, "Принял голосовое. Начинаю распознавание...")
+            bot.reply_to(
+                message, f"Принял {friendly}. Начинаю распознавание...")
         else:
             bot.reply_to(
-                message, f"В очереди {queue_size} запрос(ов). Ожидайте...")
+                message, f"Получил {friendly}. В очереди {queue_size} запрос(ов). Ожидайте...")
 
         # Добавляем в очередь
         task_queue.put((message, file_path))
@@ -266,7 +300,21 @@ def transcription_worker():
             bot.send_message(message.chat.id, "Обрабатываю ваш запрос...")
 
             start_time = time.time()
-            text = recognizer.transcribe_audio(str(file_path))
+
+            # Если это видео — сначала извлекаем аудио
+            if file_path.suffix.lower() in [".mp4", ".mov", ".mkv"]:
+                audio_path = extract_audio_from_video(file_path)
+                if not audio_path or not audio_path.exists():
+                    bot.send_message(
+                        message.chat.id, "Ошибка при извлечении аудио из видео.")
+                    continue
+                text = recognizer.transcribe_audio(str(audio_path))
+                try:
+                    audio_path.unlink()
+                except:
+                    pass
+            else:
+                text = recognizer.transcribe_audio(str(file_path))
 
             duration = time.time() - start_time
             duration_text = f"Время распознавания: {duration:.2f} сек."
@@ -290,6 +338,31 @@ def transcription_worker():
             with queue_lock:
                 is_processing = False
             task_queue.task_done()
+
+
+def extract_audio_from_video(video_path: Path) -> Path:
+    """Извлекает аудио из видеофайла с помощью ffmpeg и возвращает путь к .wav."""
+    audio_path = video_path.with_suffix(".wav")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",  # перезаписывать без запроса
+                "-i", str(video_path),
+                "-vn",  # без видео
+                "-acodec", "pcm_s16le",  # несжатый WAV
+                "-ar", "16000",  # частота дискретизации
+                "-ac", "1",  # моно
+                str(audio_path)
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return audio_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка при извлечении аудио из видео: {e}")
+        return None
 
 
 # Запускаем при старте
