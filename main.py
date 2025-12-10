@@ -22,7 +22,7 @@ from user_manager import UserManager
 from version import __version__, __release_date__
 
 
-LOG_DIR = "app/logs"
+LOG_DIR = "/app/logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 handler = RotatingFileHandler(
