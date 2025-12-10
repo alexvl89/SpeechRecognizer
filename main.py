@@ -1,3 +1,5 @@
+import platform
+from logging.handlers import RotatingFileHandler
 import subprocess
 import logging
 import os
@@ -19,12 +21,25 @@ import torch
 from user_manager import UserManager
 from version import __version__, __release_date__
 
-# ────────────────────────────────
-# Настройка логирования
+
+LOG_DIR = "app/logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, "app.log"),
+    maxBytes=5_000_000,
+    backupCount=5
+)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        handler,
+        logging.StreamHandler()
+    ]
 )
+
 logger = logging.getLogger("bot")
 
 # ────────────────────────────────
@@ -94,10 +109,14 @@ def add_user_command(message):
 
 @bot.message_handler(commands=["version"])
 def show_version(message):
-    bot.reply_to(
-        message,
-        f"🤖 Версия бота: {__version__}\n📅 Дата релиза: {__release_date__}"
-    )
+    # bot.reply_to(
+    #     message,
+    #     f"🤖 Версия бота: {__version__}\n📅 Дата релиза: {__release_date__}"
+    # )
+
+    text = show_version_log()
+
+    bot.reply_to(message, text)
 
 
 @bot.message_handler(commands=["listusers"])
@@ -154,13 +173,28 @@ def split_text_by_chars(text: str, max_len: int):
     return chunks
 
 
+def show_version_log():
+    is_linux = platform.system() == "Linux"
+
+    if is_linux:
+        text = f"🤖 Версия бота: {__version__}\n📅 Дата релиза: {__release_date__}"
+    else:
+        text = f"Версия бота: {__version__}\nДата релиза: {__release_date__}"
+
+    return text
+
 def start_bot():
 
     while True:
         try:
             logger.info("Бот запущен, ожидание сообщений...")
-            logger.info(
-                f"🤖 Версия бота: {__version__} 📅 Дата релиза: {__release_date__}")
+            # logger.info(
+            #     f"🤖 Версия бота: {__version__} 📅 Дата релиза: {__release_date__}")
+
+            text = show_version_log()
+
+            logger.info(f"{text}")
+
             # bot.polling(none_stop=True)
             bot.polling(none_stop=True, interval=3, timeout=20)
         except ApiTelegramException as e:
