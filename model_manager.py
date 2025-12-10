@@ -1,3 +1,4 @@
+import gc
 import os
 import logging
 from pathlib import Path
@@ -133,11 +134,14 @@ class WhisperModelManager:
             logger.error(f"Ошибка загрузки из {path}: {e}")
             raise
 
+
     def cleanup(self):
         """Очистка модели и GPU (по желанию)."""
         if self._model is not None:
             del self._model
             self._model = None
+            gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info("Модель выгружена из памяти.")
+
