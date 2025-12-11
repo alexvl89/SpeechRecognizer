@@ -146,7 +146,7 @@ class WhisperModelManager:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # 🔥 КЛЮЧЕВАЯ ФИШКА — принудительно отдать память ОС
+        # принудительно отдать память ОС
         try:
             import ctypes
             libc = ctypes.CDLL("libc.so.6")
