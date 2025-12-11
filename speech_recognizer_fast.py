@@ -196,7 +196,7 @@ class SpeechRecognizerFast:
             logger.info(
                 "⏳ 10 минут без активности — освобождаю модель из памяти...")
 
-            logger.info(f"Before cleanup: object={cls._model_manager.model}")
+
 
             try:
                 cls._model_manager.cleanup()
@@ -207,7 +207,7 @@ class SpeechRecognizerFast:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            logger.info(f"After cleanup: object={cls._model_manager.model}")
+
 
             logger.info("✅ Модель успешно выгружена из памяти.")
             cls._cleanup_timer = None

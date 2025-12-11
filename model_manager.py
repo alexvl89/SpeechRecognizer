@@ -137,11 +137,24 @@ class WhisperModelManager:
 
     def cleanup(self):
         """Очистка модели и GPU (по желанию)."""
+        logger.info(f"Before cleanup: object={self._model}")
+
         if self._model is not None:
             del self._model
             self._model = None
             gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        # 🔥 КЛЮЧЕВАЯ ФИШКА — принудительно отдать память ОС
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+            logger.info("malloc_trim(0) выполнен — память возвращена ОС.")
+        except Exception as e:
+            logger.warning(f"malloc_trim недоступен: {e}")
+
         logger.info("Модель выгружена из памяти.")
+        logger.info(f"After cleanup: object={self._model}")
 
