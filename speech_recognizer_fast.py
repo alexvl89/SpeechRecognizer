@@ -30,14 +30,14 @@ class SpeechRecognizerFast:
     # device = "cuda" if torch.cuda.is_available() else "cpu"
     # compute_type = "int8" if torch.cuda.is_available(
     # ) else "float32"  # int8 для CUDA, float32 для CPU
-    batch_size =  5 # Увеличен для faster-whisper, так как он более оптимизирован
-    _model_cache = None
+    batch_size = 5  # Увеличен для faster-whisper, так как он более оптимизирован
     _summarizer_cache = None
 
     _last_use_time = 0
-    _cleanup_timer = None
     _cleanup_delay = 600  # 10 минут
     _lock = threading.Lock()
+
+    _active_tasks = 0
 
 
     # Инициализируем менеджер один раз
@@ -103,6 +103,9 @@ class SpeechRecognizerFast:
     @classmethod
     def transcribe_audio(cls, input_path: str) -> str:
         """Распознаёт речь из аудиофайла и возвращает текст."""
+        with cls._lock:
+            cls._active_tasks += 1
+
         cls._log_devices()
 
         input_path = Path(input_path)
@@ -133,9 +136,10 @@ class SpeechRecognizerFast:
             # Удаляем временный WAV-файл
             wav_path.unlink(missing_ok=True)
 
-            cls._touch_activity()
-
-
+            # отмечаем завершение задачи
+            with cls._lock:
+                cls._active_tasks -= 1
+                cls._touch_activity()
 
 
     @classmethod
@@ -179,7 +183,13 @@ class SpeechRecognizerFast:
     @classmethod
     def _try_cleanup(cls):
         """Проверяет, прошло ли достаточно времени без активности, и выгружает модель."""
+
         with cls._lock:
+
+            if cls._active_tasks > 0:
+                logger.info("Не выгружаю модель — есть активные задачи.")
+                return
+
             idle_time = time.time() - cls._last_use_time
             if idle_time < cls._cleanup_delay:
                 # Активность была недавно — переносим очистку
@@ -195,9 +205,6 @@ class SpeechRecognizerFast:
             # Очистка модели
             logger.info(
                 "⏳ 10 минут без активности — освобождаю модель из памяти...")
-
-
-
             try:
                 cls._model_manager.cleanup()
             except Exception as e:
